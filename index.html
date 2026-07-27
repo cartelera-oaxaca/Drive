@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iCloud Temu V3.3 Carpetas</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,sans-serif}
+body{background:#f5f5f7;color:#1d1d1f}
+header{background:#fff;padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #ddd;position:sticky;top:0}
+.card{background:#fff;margin:12px;border-radius:16px;padding:16px}
+.zona{border:2px dashed #007aff;border-radius:12px;padding:14px;text-align:center;color:#007aff;font-weight:800;background:#eef5ff;cursor:pointer;margin-top:8px}
+button.main{width:100%;padding:14px;border:0;border-radius:12px;font-weight:900;color:#fff;margin-top:8px}
+.archivo{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;font-size:12px}
+</style>
+</head>
+<body>
+<header><div style="font-weight:900">☁️ iCloud Temu V3.3</div><div id="stats" style="font-size:11px">0</div></header>
+
+<div class="card">
+<div class="zona" id="btnFiles">📄 Subir Archivos</div>
+<div class="zona" id="btnFolder" style="border-color:#34c759;color:#34c759;background:#e8f8ee">📁 Subir Carpeta Completa</div>
+<input type="file" id="fileInput" multiple hidden>
+<input type="file" id="folderInput" webkitdirectory multiple hidden>
+<div id="lista" style="margin-top:10px"></div>
+</div>
+
+<div class="card">
+<b>📝 Nota</b><input id="tituloNota" placeholder="Título"><textarea id="contNota" placeholder="Contenido" style="width:100%;border:1px solid #ddd;border-radius:10px;padding:10px;margin-top:6px"></textarea>
+<button class="main" style="background:#34c759" onclick="guardarNota()">Guardar nota</button>
+<div id="listaNotas"></div>
+</div>
+
+<div class="card">
+<button class="main" style="background:#000" onclick="descargarRespaldo()">📦 DESCARGAR ZIP CON CARPETAS</button>
+<button class="main" style="background:#ff3b30" onclick="borrarTodo()">FORMATEAR</button>
+<div id="log" style="text-align:center;font-size:11px;color:#007aff;margin-top:6px">Local - Sin envíos</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+let db; const el=id=>document.getElementById(id);
+const req=indexedDB.open('MauskiCloudV33',1);
+req.onupgradeneeded=e=>{
+ let d=e.target.result;
+ if(!d.objectStoreNames.contains('archivos')) d.createObjectStore('archivos',{keyPath:'id',autoIncrement:true});
+ if(!d.objectStoreNames.contains('notas')) d.createObjectStore('notas',{keyPath:'id',autoIncrement:true});
+};
+req.onsuccess=e=>{ db=e.target.result; cargarTodo(); };
+
+el('btnFiles').onclick=()=>el('fileInput').click();
+el('btnFolder').onclick=()=>el('folderInput').click();
+
+async function procesarFiles(fileList){
+ el('log').innerText=`Guardando ${fileList.length}...`;
+ for(let f of fileList){
+  let buf=await f.arrayBuffer();
+  // guarda ruta relativa si viene de carpeta
+  let ruta = f.webkitRelativePath || f.name;
+  await new Promise(r=>{
+   let tx=db.transaction('archivos','readwrite');
+   tx.objectStore('archivos').add({nombre:f.name,ruta:ruta,tamaño:f.size,data:buf,fecha:new Date().toLocaleString()});
+   tx.oncomplete=r;
+  });
+ }
+ el('fileInput').value=''; el('folderInput').value='';
+ cargarTodo(); el('log').innerText=`${fileList.length} guardados`;
+}
+el('fileInput').addEventListener('change',e=>procesarFiles([...e.target.files]));
+el('folderInput').addEventListener('change',e=>procesarFiles([...e.target.files]));
+
+function cargarTodo(){
+ let tx=db.transaction('archivos','readonly').objectStore('archivos').getAll();
+ tx.onsuccess=()=>{
+  let arr=tx.result; el('stats').innerText=arr.length+' archivos';
+  el('lista').innerHTML=arr.map(a=>`<div class="archivo"><span>📄 ${a.ruta}</span><button onclick="borrarArc(${a.id})" style="border:0;background:#ff3b30;color:#fff;padding:4px 8px;border-radius:6px">X</button></div>`).join('')||'Vacío';
+ };
+ cargarNotas();
+}
+function borrarArc(id){ db.transaction('archivos','readwrite').objectStore('archivos').delete(id).onsuccess=cargarTodo; }
+function guardarNota(){
+ let t=el('tituloNota').value.trim(), c=el('contNota').value.trim();
+ if(!t&&!c) return;
+ db.transaction('notas','readwrite').objectStore('notas').add({titulo:t||'Sin título',contenido:c,fecha:new Date().toLocaleString()}).oncomplete=()=>{ el('tituloNota').value=''; el('contNota').value=''; cargarNotas(); };
+}
+function cargarNotas(){
+ let tx=db.transaction('notas','readonly').objectStore('notas').getAll();
+ tx.onsuccess=()=>{ el('listaNotas').innerHTML=tx.result.map(n=>`<div class="archivo"><b>${n.titulo}</b> <small>${n.fecha}</small></div>`).join(''); };
+}
+function borrarTodo(){
+ if(!confirm('¿Borrar todo?')) return;
+ db.transaction('archivos','readwrite').objectStore('archivos').clear();
+ db.transaction('notas','readwrite').objectStore('notas').clear().oncomplete=cargarTodo;
+}
+async function descargarRespaldo(){
+ el('log').innerText='Creando ZIP con carpetas...';
+ let archivos=await new Promise(r=>{ let q=db.transaction('archivos','readonly').objectStore('archivos').getAll(); q.onsuccess=()=>r(q.result); });
+ let notas=await new Promise(r=>{ let q=db.transaction('notas','readonly').objectStore('notas').getAll(); q.onsuccess=()=>r(q.result); });
+ if(!archivos.length&&!notas.length){ alert('Vacío'); return; }
+ let zip=new JSZip();
+ archivos.forEach(a=>{ zip.file(a.ruta, a.data); });
+ let resumen=`Respaldo ${new Date().toLocaleString()}\n`+archivos.map(a=>a.ruta).join('\n');
+ zip.file('RESUMEN.txt',resumen);
+ zip.file('NOTAS.txt',notas.map(n=>`${n.titulo}\n${n.contenido}\n${n.fecha}\n---`).join('\n')||'Sin notas');
+ let blob=await zip.generateAsync({type:'blob'});
+ let url=URL.createObjectURL(blob); let atag=document.createElement('a'); atag.href=url; atag.download=`Respaldo_Carpetas_${Date.now()}.zip`; atag.click();
+ el('log').innerText=`ZIP con ${archivos.length} archivos listo`;
+}
+</script>
+</body>
+</html>
